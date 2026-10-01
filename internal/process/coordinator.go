@@ -33,6 +33,7 @@ type Plant struct {
 	snapshots     *journal.SnapshotStore
 	intake        *intake.Controller
 	equalizers    *intake.EqualizationPool
+	overflow      *intake.OverflowGuard
 	aeration      *aeration.Controller
 	dosing        *dosing.Service
 	labResults    *lab.Results
@@ -72,7 +73,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	blowers := make([]aeration.Blower, 0, len(lines))
 	pumpList := make([]sludge.Pump, 0, len(lines)*2)
 	for index, lineID := range lines {
-		equalizers = append(equalizers, intake.Equalizer{ID: "EQ-" + string(lineID), Capacity: 1600 + float64(index*150)})
+		equalizers = append(equalizers, intake.Equalizer{ID: "EQ-" + string(lineID), Capacity: 1600 + float64(index*150), FullLevelM: 6.0})
 		blowers = append(blowers, aeration.Blower{ID: "blower-basin-" + string(lineID), BasinID: "basin-" + string(lineID)})
 		pumpList = append(pumpList,
 			sludge.Pump{ID: "pump-" + string(lineID) + "-A", LineID: lineID, Kind: model.DevicePump},
@@ -87,6 +88,11 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	if err != nil {
 		return nil, err
 	}
+	overflowGuard, err := intake.NewOverflowGuard(pool, intake.DefaultThresholds(), now)
+	if err != nil {
+		return nil, err
+	}
+	intakeController.BindGuard(overflowGuard)
 	for _, lineID := range lines {
 		if err := intakeController.Configure(lineID, 1800); err != nil {
 			return nil, err
@@ -143,7 +149,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	plant := &Plant{
 		now: now, lines: make(map[model.LineID]model.LineState), batches: make(map[uuid.UUID]model.Batch),
 		lineBatches: make(map[model.LineID]uuid.UUID), store: store, snapshots: snapshots,
-		intake: intakeController, equalizers: pool, aeration: aerationController, dosing: dosingService,
+		intake: intakeController, equalizers: pool, overflow: overflowGuard, aeration: aerationController, dosing: dosingService,
 		labResults: lab.NewResults(), permits: permits, valves: valves, alarms: alarm.NewService(),
 		settling: make(map[model.LineID]*settling.State), cycles: settling.NewCycleBook(),
 		interlocks: arbiter, drains: drains, pumps: pumps, handovers: sludge.NewHandoverBook(),
@@ -159,9 +165,13 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		listener.Bind(state)
 		plant.settling[lineID] = state
 	}
+	overflowGuard.Bind(plant, plant)
 	if err := sampler.Subscribe(func(sample model.Sample) {
-		if sample.Kind == model.SampleSludgeBlanket {
+		switch sample.Kind {
+		case model.SampleSludgeBlanket:
 			_, _ = plant.UpdateBlanket(sample.LineID, sample.Value)
+		case model.SampleWaterLevel:
+			_ = plant.ingestWaterLevel(sample)
 		}
 	}); err != nil {
 		return nil, err

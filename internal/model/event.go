@@ -17,6 +17,7 @@ const (
 	EventDosingChanged     EventKind = "dosing.changed"
 	EventDeviceCommanded   EventKind = "device.commanded"
 	EventEmergencyIsolated EventKind = "emergency.isolated"
+	EventOverflowChanged   EventKind = "overflow.protection_changed"
 )
 
 type Event struct {

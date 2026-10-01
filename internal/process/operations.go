@@ -45,6 +45,14 @@ func (p *Plant) UpdateBlanket(lineID model.LineID, level float64) (settling.Snap
 }
 
 func (p *Plant) ReceiveSample(ctx context.Context, sample model.Sample) error {
+	// Gate water levels on the overflow guard's ordering before the reading is
+	// journaled: an expired or out-of-order measurement must be rejected so it
+	// can neither advance cursors nor release a latched protection.
+	if sample.Kind == model.SampleWaterLevel {
+		if err := p.overflow.Acceptable(sample); err != nil {
+			return err
+		}
+	}
 	if err := p.receiver.Receive(ctx, sample, p.now()); err != nil {
 		return err
 	}

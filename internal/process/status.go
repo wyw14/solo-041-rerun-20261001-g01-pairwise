@@ -20,6 +20,7 @@ type LineStatus struct {
 	Batch         *model.Batch           `json:"batch,omitempty"`
 	Intake        *intake.Admission      `json:"intake,omitempty"`
 	Equalizers    []intake.Equalizer     `json:"equalizers"`
+	Overflow      *intake.ProtectionView `json:"overflow,omitempty"`
 	Dose          *dosing.Change         `json:"dose,omitempty"`
 	LabResult     *model.LabResult       `json:"lab_result,omitempty"`
 	Permit        *discharge.Permit      `json:"permit,omitempty"`
@@ -72,6 +73,10 @@ func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
 	if value, found := p.intake.Current(lineID); found {
 		admission = &value
 	}
+	var overflow *intake.ProtectionView
+	if value, found := p.overflow.LineView(lineID); found && value.Level != intake.LevelNormal {
+		overflow = &value
+	}
 	var cycle *settling.Cycle
 	if value, found := p.cycles.Current(lineID); found {
 		cycle = &value
@@ -85,7 +90,7 @@ func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
 		sequence = &value
 	}
 	return LineStatus{
-		Line: line, Batch: batch, Intake: admission, Equalizers: p.equalizers.Snapshot(), Dose: dose, LabResult: labResult, Permit: permit,
+		Line: line, Batch: batch, Intake: admission, Equalizers: p.equalizers.Snapshot(), Overflow: overflow, Dose: dose, LabResult: labResult, Permit: permit,
 		Cycle: cycle, Handover: handover, Sequence: sequence, Settling: settlingState.Snapshot(),
 		Samples: p.sampler.LineSnapshot(lineID), SampleCursor: p.receiver.Current(lineID),
 		Compensations: p.compensations.Pending(),

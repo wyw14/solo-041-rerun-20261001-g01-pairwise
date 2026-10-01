@@ -9,6 +9,11 @@
     <section class="panel wide"><h2>处理线</h2><table><thead><tr><th>处理线</th><th>阶段</th><th>代际</th><th>批次</th></tr></thead><tbody id="lines"></tbody></table></section>
     <section class="panel"><h2>接纳进水</h2><form id="start"><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>流量 m³/h<input name="flow" type="number" value="760" min="1"></label><label>来源<input name="source" value="north-intake"></label><button>创建处理批次</button></form></section>
     <section class="panel wide"><h2>最近操作</h2><pre id="output">等待操作</pre></section>
+    <section class="panel wide"><h2>液位溢流保护</h2>
+      <div class="muted">按均衡池编号监控，触发依据与恢复条件如下；过期或乱序水位不会解除保护。</div>
+      <table><thead><tr><th>均衡池</th><th>处理线/批次</th><th>液位</th><th>充满率</th><th>距溢流</th><th>保护状态</th><th>允许进水</th><th>触发依据</th><th>恢复条件</th><th></th></tr></thead><tbody id="overflow"></tbody></table>
+      <form id="level"><label>均衡池<select name="basin"><option>EQ-line-1</option><option>EQ-line-2</option><option>EQ-line-3</option></select></label><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>水位 m<input name="value" type="number" step="0.01" value="5.0"></label><label>序列号<input name="sequence" type="number" value="1" min="1"></label><button>上报水位</button></form>
+    </section>
     <section class="panel"><h2>急停隔离</h2><form id="stop"><label>处理线<select name="line"><option>line-1</option><option>line-2</option><option>line-3</option></select></label><label>原因<input name="reason" value="operator safety check"></label><button class="danger">隔离处理线</button></form></section>
   </div>
 </main>
@@ -16,4 +21,24 @@
 async function loadLines(){const data=await request('/api/process-lines');document.querySelector('#lines').innerHTML=data.lines.map(x=>`<tr><td>${x.line_id}</td><td>${x.stage}</td><td>${x.generation}</td><td>${x.batch_id||'-'}</td></tr>`).join('')}
 document.querySelector('#start').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{show(await request(`/api/process-lines/${f.get('line')}/batches`,{method:'POST',body:JSON.stringify({flow_m3_hour:Number(f.get('flow')),source:f.get('source')})}));loadLines()}catch(err){showError(err)}});
 document.querySelector('#stop').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{show(await request(`/api/emergency/${f.get('line')}`,{method:'POST',body:JSON.stringify({reason:f.get('reason')})}));loadLines()}catch(err){showError(err)}});loadLines().catch(showError);
+
+const LEVEL_NAME={normal:'正常',warning:'预警',restrict_inflow:'限流',stop_inflow:'停止进水'};
+function minutes(v){return v===null||v===undefined?'-':Number(v).toFixed(1)+' 分钟'}
+function basisText(b){if(!b)return '-';return b.rule==='fill_ratio'?`液位 ${b.water_level_m.toFixed(2)}/${b.full_level_m.toFixed(2)} m ≥ ${(b.threshold_ratio*100).toFixed(0)}%（序号 ${b.sample_sequence}）`:`预计 ${minutes(b.time_to_overflow_minutes)} 后溢流 ≤ ${b.threshold_minutes.toFixed(0)} 分钟（序号 ${b.sample_sequence}）`}
+function recoveryText(r){if(!r)return '-';let s=r.message;if(r.sample_stale)s+='；样本过期';if(r.dwell_remaining)s+=`；稳定计时剩余 ${r.dwell_remaining}`;return s+(r.satisfied?'（已满足）':'（未满足）')}
+async function loadOverflow(){
+  const d=await request('/api/overflow');
+  document.querySelector('#overflow').innerHTML=d.basins.map(x=>`<tr>
+    <td>${x.basin_id}</td><td>${x.line_id||'-'}${x.batch_id?'<br><span class="muted">'+x.batch_id.slice(0,8)+'</span>':''}</td>
+    <td>${x.water_level_m.toFixed(2)}/${x.full_level_m.toFixed(2)} m${x.sample_stale?' <span class="danger">过期</span>':''}</td>
+    <td>${(x.fill_ratio*100).toFixed(1)}%</td>
+    <td>${minutes(x.time_to_overflow_minutes)}</td>
+    <td>${LEVEL_NAME[x.level]||x.level}</td>
+    <td>${x.level==='stop_inflow'?'<span class="danger">禁止</span>':x.level==='restrict_inflow'?x.allowed_flow_m3_hour.toFixed(0)+' m³/h':'-'}</td>
+    <td>${basisText(x.basis)}</td><td>${recoveryText(x.recovery)}</td>
+    <td>${x.level==='normal'?'':`<button data-reset="${x.basin_id}">复位</button>`}</td></tr>`).join('');
+  document.querySelectorAll('[data-reset]').forEach(b=>b.onclick=async()=>{try{show(await request(`/api/overflow/${b.dataset.reset}/reset`,{method:'POST',body:'{}'}));loadOverflow()}catch(err){showError(err)}});
+}
+document.querySelector('#level').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);try{show(await request('/api/samples',{method:'POST',body:JSON.stringify({line_id:f.get('line'),basin_id:f.get('basin'),kind:'water_level',sequence:Number(f.get('sequence')),value:Number(f.get('value')),unit:'m'})}));loadOverflow()}catch(err){showError(err)}});
+loadOverflow().catch(showError);
 </script></body></html>

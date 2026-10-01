@@ -63,6 +63,21 @@ func (p *Plant) ApplyRecovered(ctx context.Context, event model.Event) error {
 			return err
 		}
 	}
+	if event.Kind == model.EventOverflowChanged {
+		var record overflowEvent
+		if err := event.Decode(&record); err != nil {
+			return err
+		}
+		if record.LineID != event.LineID {
+			return errors.New("overflow recovery payload does not match event line")
+		}
+		view := record.View
+		view.LineID = record.LineID
+		view.BatchID = record.BatchID
+		if err := p.overflow.Restore(record.BasinID, view, event.OccurredAt); err != nil {
+			return err
+		}
+	}
 	state.LastEventSeq = event.Sequence
 	state.UpdatedAt = event.OccurredAt
 	p.lines[event.LineID] = state
