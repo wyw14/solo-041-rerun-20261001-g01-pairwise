@@ -16,26 +16,27 @@ import (
 )
 
 type LineStatus struct {
-	Line          model.LineState        `json:"line"`
-	Batch         *model.Batch           `json:"batch,omitempty"`
-	Intake        *intake.Admission      `json:"intake,omitempty"`
-	Equalizers    []intake.Equalizer     `json:"equalizers"`
-	Dose          *dosing.Change         `json:"dose,omitempty"`
-	LabResult     *model.LabResult       `json:"lab_result,omitempty"`
-	Permit        *discharge.Permit      `json:"permit,omitempty"`
-	Cycle         *settling.Cycle        `json:"cycle,omitempty"`
-	Handover      *sludge.Handover       `json:"handover,omitempty"`
-	Sequence      *sludge.Sequence       `json:"sequence,omitempty"`
-	Settling      settling.Snapshot      `json:"settling"`
-	Samples       []model.Sample         `json:"samples"`
-	SampleCursor  uint64                 `json:"sample_cursor"`
-	Compensations []journal.Compensation `json:"compensations"`
-	Pumps         []sludge.Pump          `json:"pumps"`
-	Blowers       []aeration.Blower      `json:"blowers"`
-	Valves        []discharge.Valve      `json:"valves"`
-	Commands      []model.DeviceCommand  `json:"commands"`
-	AlarmCount    int                    `json:"alarm_count"`
-	ObservedAt    time.Time              `json:"observed_at"`
+	Line          model.LineState          `json:"line"`
+	Batch         *model.Batch             `json:"batch,omitempty"`
+	Intake        *intake.Admission        `json:"intake,omitempty"`
+	Equalizers    []intake.Equalizer       `json:"equalizers"`
+	Dose          *dosing.Change           `json:"dose,omitempty"`
+	LabResult     *model.LabResult         `json:"lab_result,omitempty"`
+	Permit        *discharge.Permit        `json:"permit,omitempty"`
+	Cycle         *settling.Cycle          `json:"cycle,omitempty"`
+	Handover      *sludge.Handover         `json:"handover,omitempty"`
+	Sequence      *sludge.Sequence         `json:"sequence,omitempty"`
+	Settling      settling.Snapshot        `json:"settling"`
+	Samples       []model.Sample           `json:"samples"`
+	SampleCursor  uint64                   `json:"sample_cursor"`
+	Compensations []journal.Compensation   `json:"compensations"`
+	Pumps         []sludge.Pump            `json:"pumps"`
+	Blowers       []aeration.Blower        `json:"blowers"`
+	Valves        []discharge.Valve        `json:"valves"`
+	Commands      []model.DeviceCommand    `json:"commands"`
+	Protection    *intake.ProtectionStatus `json:"protection,omitempty"`
+	AlarmCount    int                      `json:"alarm_count"`
+	ObservedAt    time.Time                `json:"observed_at"`
 }
 
 func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
@@ -72,6 +73,16 @@ func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
 	if value, found := p.intake.Current(lineID); found {
 		admission = &value
 	}
+	var protection *intake.ProtectionStatus
+	basinID := ""
+	if admission != nil {
+		basinID = admission.EqualizerID
+	}
+	if basinID != "" {
+		if status, err := p.OverflowBasin(basinID); err == nil {
+			protection = &status
+		}
+	}
 	var cycle *settling.Cycle
 	if value, found := p.cycles.Current(lineID); found {
 		cycle = &value
@@ -91,6 +102,7 @@ func (p *Plant) Status(lineID model.LineID) (LineStatus, error) {
 		Compensations: p.compensations.Pending(),
 		Pumps:         filterPumps(p.pumps.Snapshot(), lineID), Blowers: p.aeration.Blowers(),
 		Valves: p.valves.Snapshot(), Commands: p.devices.All(),
+		Protection: protection,
 		AlarmCount: len(p.alarms.Active(lineID)), ObservedAt: p.now().UTC(),
 	}, nil
 }

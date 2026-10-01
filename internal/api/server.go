@@ -66,6 +66,8 @@ func (s *Server) routes() http.Handler {
 		api.Post("/alarms/{alarmID}/ack", s.acknowledgeAlarm)
 		api.Post("/alarms/{alarmID}/recover", s.recoverAlarm)
 		api.Post("/samples", s.receiveSample)
+		api.Get("/intake/protection", s.overflowProtection)
+		api.Get("/intake/protection/{basinID}", s.overflowBasin)
 		api.Post("/settling/{lineID}/blanket", s.updateBlanket)
 		api.Post("/dosing", NewDoseHandler(s.plant).ServeHTTP)
 		api.Post("/lab/results", s.labResult)

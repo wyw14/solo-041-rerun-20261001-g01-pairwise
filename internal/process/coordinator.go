@@ -50,6 +50,8 @@ type Plant struct {
 	devices       *DeviceBus
 	sampler       *sensor.Sampler
 	receiver      *sensor.Receiver
+	protection    *intake.Protection
+	overflowLinks map[string]overflowLink
 }
 
 func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plant, error) {
@@ -87,6 +89,17 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 	if err != nil {
 		return nil, err
 	}
+	capacities := make(map[string]float64, len(equalizers))
+	basinIDs := make([]string, 0, len(equalizers))
+	for _, basin := range equalizers {
+		capacities[basin.ID] = basin.Capacity
+		basinIDs = append(basinIDs, basin.ID)
+	}
+	protection, err := intake.NewProtection(basinIDs, capacities, intake.DefaultThresholds)
+	if err != nil {
+		return nil, err
+	}
+	intakeController.BindProtection(protection)
 	for _, lineID := range lines {
 		if err := intakeController.Configure(lineID, 1800); err != nil {
 			return nil, err
@@ -148,6 +161,7 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		settling: make(map[model.LineID]*settling.State), cycles: settling.NewCycleBook(),
 		interlocks: arbiter, drains: drains, pumps: pumps, handovers: sludge.NewHandoverBook(),
 		sequences: sequences, compensations: queue, devices: devices, sampler: sampler, receiver: receiver,
+		protection: protection, overflowLinks: make(map[string]overflowLink),
 	}
 	for _, lineID := range lines {
 		plant.lines[lineID] = model.NewLineState(lineID, now())
@@ -160,8 +174,11 @@ func NewPlant(dataDir string, lines []model.LineID, now func() time.Time) (*Plan
 		plant.settling[lineID] = state
 	}
 	if err := sampler.Subscribe(func(sample model.Sample) {
-		if sample.Kind == model.SampleSludgeBlanket {
+		switch sample.Kind {
+		case model.SampleSludgeBlanket:
 			_, _ = plant.UpdateBlanket(sample.LineID, sample.Value)
+		case model.SampleWaterLevel:
+			_ = plant.ObserveWaterLevel(context.Background(), sample)
 		}
 	}); err != nil {
 		return nil, err

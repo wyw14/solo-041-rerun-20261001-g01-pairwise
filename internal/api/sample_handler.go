@@ -24,11 +24,6 @@ func (s *Server) receiveSample(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	lineID, err := model.ParseLineID(input.LineID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
 	kind, err := model.ParseSampleKind(input.Kind)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -41,6 +36,24 @@ func (s *Server) receiveSample(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
+	}
+	// Water level is reported by basin id ("按池编号上报") and handled by the
+	// overflow protection book. The line is resolved from the current basin
+	// assignment, so line_id is optional here. Other sample kinds keep the
+	// strict per-line sequence cursor.
+	if kind == model.SampleWaterLevel {
+		status, reportErr := s.plant.ReportWaterLevel(r.Context(), input.BasinID, input.Sequence, input.Value, input.Unit, observedAt)
+		if reportErr != nil {
+			writeError(w, http.StatusConflict, reportErr)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, status)
+		return
+	}
+	lineID, err := model.ParseLineID(input.LineID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
 	}
 	sample := model.NewSample(lineID, input.BasinID, kind, input.Sequence, input.Value, input.Unit, observedAt)
 	if err := s.plant.ReceiveSample(r.Context(), sample); err != nil {
